@@ -3,7 +3,7 @@
 # created by The MathWorks, Inc. "MATLAB" is a registered trademark of The MathWorks, Inc.
 #
 # Runs local checks useful for a MATLAB support request (system requirements, license file
-# validity, network license server reachability, today's log entries) and writes only the
+# validity, network license server reachability, today's log errors) and writes only the
 # PASS/FAIL results to a report. Your MAC address, hostname, and disk identifiers are read
 # in memory ONLY to compare against your MATLAB license file - they are never written to
 # the report. No root required. Nothing is sent over the network except a DNS lookup and a
@@ -19,8 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TODAY="$(date +%Y-%m-%d)"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_FILE="$SCRIPT_DIR/MATLAB_Diagnostic_${TIMESTAMP}.txt"
+ERR_RE='(error|fail(ed|ure)?|fatal|exception|denied|unable|cannot|invalid|expired|unlicensed|refused|timed? ?out|no such feature)'
 
-section() { printf '\n=== %s ===\n' "$1" >> "$OUT_FILE"; }
+section() { echo "Checking: $1..."; printf '\n=== %s ===\n' "$1" >> "$OUT_FILE"; }
 line() { printf '%s\n' "$1" >> "$OUT_FILE"; }
 
 # Replaces the home directory and username in a path with placeholders before it is printed.
@@ -46,18 +47,55 @@ collect_local_macs() {
     echo "$macs"
 }
 
-# Extracts a KEY=value or KEY="value" field from a license file's INCREMENT/SERVER lines.
-extract_field() {
-    local file="$1" field="$2"
-    sed -nE "s/.*${field}=\"?([^\" ]+)\"?.*/\1/p" "$file" 2>/dev/null | head -1
+# Joins backslash-continuation lines of a license file into one logical line per statement.
+join_continuations() {
+    awk '{
+        gsub(/\r$/,"")
+        buf = buf $0
+        if (buf ~ /\\[ \t]*$/) { sub(/\\[ \t]*$/, " ", buf); next }
+        print buf; buf=""
+    } END { if (buf != "") print buf }' "$1" 2>/dev/null
 }
 
-# Extracts the "License Number: NNNNNN" comment line from the top of a license file, if present.
+# Returns the joined INCREMENT statement for the MATLAB feature (or the first INCREMENT
+# statement of any feature as a fallback), so HOSTID/USER_NAME/ISSUED/SN can be extracted
+# regardless of which continuation line they physically wrapped onto.
+get_increment_stmt() {
+    local joined
+    joined="$(join_continuations "$1")"
+    local stmt
+    stmt="$(printf '%s\n' "$joined" | awk '/^INCREMENT[ \t]+MATLAB[ \t]/{print; exit}')"
+    [ -z "$stmt" ] && stmt="$(printf '%s\n' "$joined" | awk '/^INCREMENT[ \t]/{print; exit}')"
+    printf '%s' "$stmt"
+}
+
+# Extracts a KEY=value or KEY="value" field from an already-joined INCREMENT statement string.
+extract_field() {
+    printf '%s' "$1" | sed -nE "s/.*${2}=\"?([^\" ]+)\"?.*/\1/p" | head -1
+}
+
+# License number: "# LicenseNo:"/"# License Number:" comment first, SN= field as fallback.
 extract_license_number() {
-    local file="$1"
+    local file="$1" stmt="$2"
     local num
-    num="$(head -n 40 "$file" 2>/dev/null | grep -Eio 'License[[:space:]]*Number[[:space:]:]*[0-9]{4,10}' | grep -Eo '[0-9]{4,10}' | head -n1)"
+    num="$(sed -nE 's/^#[[:space:]]*[Ll]icense[[:space:]]*(No|Number)\.?:?[[:space:]]*([0-9][0-9]*).*/\2/p' "$file" 2>/dev/null | head -1)"
+    if [ -z "$num" ] && [ -n "$stmt" ]; then
+        num="$(printf '%s' "$stmt" | grep -Eo 'SN=[0-9]+' | head -1 | sed 's/SN=//')"
+    fi
     [ -n "$num" ] && echo "$num" || echo "not found - check file manually"
+}
+
+# Formats a FlexLM exp_date field, recognizing the "all-zero year" / "0" / "permanent" sentinels.
+format_expiry() {
+    local exp="$1"
+    [ -z "$exp" ] && { echo "unknown"; return; }
+    local exp_lc
+    exp_lc="$(echo "$exp" | tr '[:upper:]' '[:lower:]')"
+    if echo "$exp_lc" | grep -Eq '^(permanent|0|[0-9]{1,2}-[a-z]{3}-0+)$'; then
+        echo "permanent (never expires)"
+    else
+        echo "$exp"
+    fi
 }
 
 # Prints only today's lines from a log file, or the whole file if it was modified today
@@ -78,6 +116,43 @@ today_lines_or_none() {
         return 0
     fi
     return 1
+}
+
+# Filters text down to error-looking lines and collapses exact duplicates (ignoring a
+# leading timestamp) to "<line> ..xN", preserving first-occurrence order. Prints nothing
+# (and returns 1) if nothing matches.
+filter_errors_dedup() {
+    local matched
+    matched="$(printf '%s\n' "$1" | grep -Ei "$ERR_RE")"
+    [ -z "$matched" ] && return 1
+    local keys=() counts=()
+    while IFS= read -r raw; do
+        [ -z "$raw" ] && continue
+        local ln
+        ln="$(printf '%s' "$raw" | sed -E '
+            s/^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}([.,][0-9]+)?[[:space:]]*//;
+            s/^[0-9]{1,2}:[0-9]{2}:[0-9]{2}[[:space:]]*//
+        ')"
+        local idx=-1 i
+        for ((i = 0; i < ${#keys[@]}; i++)); do
+            if [ "${keys[$i]}" = "$ln" ]; then idx=$i; break; fi
+        done
+        if [ "$idx" -ge 0 ]; then
+            counts[$idx]=$(( counts[idx] + 1 ))
+        else
+            keys+=("$ln")
+            counts+=(1)
+        fi
+    done <<< "$matched"
+    local n=${#keys[@]}
+    for ((i = 0; i < n; i++)); do
+        if [ "${counts[$i]}" -gt 1 ]; then
+            printf '%s ..x%d\n' "${keys[$i]}" "${counts[$i]}"
+        else
+            printf '%s\n' "${keys[$i]}"
+        fi
+    done
+    return 0
 }
 
 # Checks whether a hostname resolves, without revealing anything about the local machine.
@@ -103,6 +178,7 @@ check_port() {
     fi
 }
 
+echo "MATLAB self-check running - this takes about 10-20 seconds, please wait..."
 : > "$OUT_FILE"
 section 'Report Metadata'
 line "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -157,30 +233,44 @@ for dir in "$HOME/.matlab"/R*_licenses /usr/local/MATLAB/R*/licenses; do
     for f in "${files[@]}"; do
         [ -f "$f" ] || continue
         lic_found=1
-        num="$(extract_license_number "$f")"
+        stmt="$(get_increment_stmt "$f")"
+        num="$(extract_license_number "$f" "$stmt")"
         line "Exists: $(mask_path "$f") | License Number: $num"
 
-        hostid="$(extract_field "$f" HOSTID)"
-        if [ -n "$hostid" ]; then
-            hostid_norm="$(echo "$hostid" | tr -d ':' | tr '[:lower:]' '[:upper:]')"
-            if echo "$local_macs" | grep -qw "$hostid_norm"; then
-                line '  Host ID match: PASS'
-            else
-                line '  Host ID match: FAIL (this machine does not match the license file)'
-            fi
-        else
-            line '  Host ID match: N/A (no HOSTID field in this license file)'
-        fi
+        if [ -n "$stmt" ]; then
+            exp_date="$(printf '%s' "$stmt" | awk '{print $5}')"
+            issued_val="$(extract_field "$stmt" ISSUED)"
+            [ -z "$issued_val" ] && issued_val="unknown"
+            line "  Issued: $issued_val | Expires: $(format_expiry "$exp_date")"
 
-        uname_in_file="$(extract_field "$f" USER_NAME)"
-        if [ -n "$uname_in_file" ]; then
-            if [ "$(echo "$uname_in_file" | tr '[:upper:]' '[:lower:]')" = "$(echo "$local_user" | tr '[:upper:]' '[:lower:]')" ]; then
-                line '  Username match: PASS'
+            hostid="$(extract_field "$stmt" HOSTID)"
+            if [ -z "$hostid" ]; then
+                line '  Host ID match: N/A (no HOSTID field in this license file)'
+            elif echo "$hostid" | grep -qi '^DISK_SERIAL_NUM='; then
+                line '  Host ID match: N/A (Windows disk-serial lock - not applicable on Linux)'
+            elif echo "$hostid" | grep -Eq '^[0-9A-Fa-f]{12}$'; then
+                hostid_norm="$(echo "$hostid" | tr '[:lower:]' '[:upper:]')"
+                if echo "$local_macs" | grep -qw "$hostid_norm"; then
+                    line '  Host ID match: PASS'
+                else
+                    line '  Host ID match: FAIL (this machine does not match the license file)'
+                fi
             else
-                line '  Username match: FAIL (license was issued to a different OS username)'
+                line '  Host ID match: N/A (HOSTID format not recognized)'
+            fi
+
+            uname_in_file="$(extract_field "$stmt" USER_NAME)"
+            if [ -n "$uname_in_file" ]; then
+                if [ "$(echo "$uname_in_file" | tr '[:upper:]' '[:lower:]')" = "$(echo "$local_user" | tr '[:upper:]' '[:lower:]')" ]; then
+                    line '  Username match: PASS'
+                else
+                    line '  Username match: FAIL (license was issued to a different OS username)'
+                fi
+            else
+                line '  Username match: N/A (no USER_NAME field in this license file)'
             fi
         else
-            line '  Username match: N/A (no USER_NAME field in this license file)'
+            line '  Host ID match: N/A (no INCREMENT statement found in this file)'
         fi
 
         if [ -z "$srv_host" ]; then
@@ -213,24 +303,24 @@ else
     line 'No network license server configured (node-locked license, or no license file found)'
 fi
 
-section 'Logs (today only, best-effort - unverified paths, see note above)'
+section 'Logs (today, errors only, best-effort - unverified paths, see note above)'
+any_log_content=0
+
 install_log="/tmp/mathworks_${USER}.log"
-content="$(today_lines_or_none "$install_log")"
-if [ $? -eq 0 ] && [ -n "$content" ]; then
-    line "--- Installation log: $(mask_path "$install_log") (today) ---"
-    line "$content"
-else
-    line "Installation log not found or has no entries from today: $(mask_path "$install_log") (note: temp logs may be deleted on reboot)"
-fi
+content="$(today_lines_or_none "$install_log")" && [ -n "$content" ] && filtered="$(filter_errors_dedup "$content")" && [ -n "$filtered" ] && {
+    any_log_content=1
+    line "--- Installation log: $(mask_path "$install_log") ---"
+    line "$filtered"
+}
 
 activation_log="/tmp/aws_${USER}.log"
-content="$(today_lines_or_none "$activation_log")"
-if [ $? -eq 0 ] && [ -n "$content" ]; then
-    line "--- Activation log: $(mask_path "$activation_log") (today) ---"
-    line "$content"
-else
-    line "Activation log not found or has no entries from today: $(mask_path "$activation_log") (note: temp logs may be deleted on reboot)"
-fi
+content="$(today_lines_or_none "$activation_log")" && [ -n "$content" ] && filtered="$(filter_errors_dedup "$content")" && [ -n "$filtered" ] && {
+    any_log_content=1
+    line "--- Activation log: $(mask_path "$activation_log") ---"
+    line "$filtered"
+}
+
+[ "$any_log_content" -eq 0 ] && line 'No error-level log entries found for today in the standard locations.'
 
 section 'Environment Variables'
 for name in LM_LICENSE_FILE MLM_LICENSE_FILE; do

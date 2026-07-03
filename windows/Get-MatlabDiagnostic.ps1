@@ -3,7 +3,7 @@
     created by The MathWorks, Inc. "MATLAB" is a registered trademark of The MathWorks, Inc.
 
     Runs local checks useful for a MATLAB support request (system requirements, license file
-    validity, network license server reachability, today's log entries) and writes only the
+    validity, network license server reachability, today's log errors) and writes only the
     PASS/FAIL results to a report. Your MAC address, hostname, and disk identifiers are read
     in memory ONLY to compare against your MATLAB license file - they are never written to
     the report. No admin rights required. Nothing is sent over the network except a DNS
@@ -20,9 +20,11 @@ param(
 $OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 
 $ErrorActionPreference = 'Continue'
+$ErrRe = '(error|fail(ed|ure)?|fatal|exception|denied|unable|cannot|invalid|expired|unlicensed|refused|timed? ?out|no such feature)'
 
 function Add-Section {
     param([System.Text.StringBuilder]$Report, [string]$Title)
+    Write-Host "Checking: $Title..."
     [void]$Report.AppendLine("`n=== $Title ===")
 }
 
@@ -51,27 +53,72 @@ function Get-LocalMacs {
     return $macs
 }
 
-# Extracts a KEY=value or KEY="value" field from a license file's INCREMENT/SERVER lines.
-function Get-LicenseField {
-    param([string]$FilePath, [string]$FieldName)
+# Collects the system drive's volume serial number (in-memory only - this is what MATLAB
+# uses as HOSTID=DISK_SERIAL_NUM= on Windows Individual/Designated Computer licenses).
+function Get-LocalVolumeSerial {
     try {
-        $content = Get-Content -Path $FilePath -Raw -ErrorAction Stop
-        if ($content -match "$FieldName=`"?([^`"\s]+)`"?") {
-            return $Matches[1]
-        }
+        $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"
+        if ($disk.VolumeSerialNumber) { return $disk.VolumeSerialNumber.ToUpper() }
     } catch {}
     return $null
 }
 
-function Get-LicenseNumber {
+# Joins backslash-continuation lines of a license file into one logical line per statement.
+function Get-JoinedStatements {
     param([string]$FilePath)
+    try {
+        $raw = Get-Content -Path $FilePath -Raw -ErrorAction Stop
+    } catch { return @() }
+    $raw = $raw -replace "`r`n", "`n"
+    $joined = $raw -replace '\\[ \t]*\n[ \t]*', ' '
+    return ($joined -split "`n")
+}
+
+# Returns the joined INCREMENT statement for the MATLAB feature (or the first INCREMENT
+# statement of any feature as a fallback), so HOSTID/USER_NAME/ISSUED/SN can be extracted
+# regardless of which continuation line they physically wrapped onto.
+function Get-IncrementStatement {
+    param([string]$FilePath)
+    $stmts = Get-JoinedStatements -FilePath $FilePath
+    $stmt = $stmts | Where-Object { $_ -match '^INCREMENT\s+MATLAB\s' } | Select-Object -First 1
+    if (-not $stmt) { $stmt = $stmts | Where-Object { $_ -match '^INCREMENT\s' } | Select-Object -First 1 }
+    return $stmt
+}
+
+# Extracts a KEY=value or KEY="value" field from an already-joined INCREMENT statement string.
+function Get-Field {
+    param([string]$Text, [string]$FieldName)
+    if ($Text -and $Text -match "$FieldName=`"?([^`"\s]+)`"?") {
+        return $Matches[1]
+    }
+    return $null
+}
+
+# License number: "# LicenseNo:"/"# License Number:" comment first, SN= field as fallback.
+function Get-LicenseNumber {
+    param([string]$FilePath, [string]$Stmt)
     try {
         $head = Get-Content -Path $FilePath -TotalCount 40 -ErrorAction Stop
         foreach ($l in $head) {
-            if ($l -match 'License\s*Number\s*:?\s*(\d{4,10})') { return $Matches[1] }
+            if ($l -match '^#\s*License\s*(No|Number)\.?:?\s*(\d{4,10})') { return $Matches[2] }
         }
-    } catch { return $null }
+    } catch {}
+    if ($Stmt -and $Stmt -match 'SN=(\d+)') { return $Matches[1] }
     return $null
+}
+
+# Formats a FlexLM exp_date (5th field of the INCREMENT statement), recognizing the
+# "all-zero year" / "0" / "permanent" sentinels as never-expiring.
+function Get-ExpiryDisplay {
+    param([string]$Stmt)
+    if (-not $Stmt) { return 'unknown' }
+    $fields = $Stmt -split '\s+'
+    if ($fields.Length -lt 5) { return 'unknown' }
+    $exp = $fields[4]
+    if ($exp -match '^(?i)(permanent|0|\d{1,2}-[a-z]{3}-0+)$') {
+        return 'permanent (never expires)'
+    }
+    return $exp
 }
 
 function Get-TodayLinesFromFile {
@@ -87,6 +134,26 @@ function Get-TodayLinesFromFile {
     } catch {
         return $null
     }
+}
+
+# Filters text down to error-looking lines and collapses duplicates (ignoring a leading
+# timestamp) to "<line> ..xN", preserving first-occurrence order. Returns $null if nothing matches.
+function Get-FilteredDedupLines {
+    param([string]$Content)
+    if (-not $Content) { return $null }
+    $lines = $Content -split "`n" | Where-Object { $_ -match "(?i)$ErrRe" }
+    if (-not $lines) { return $null }
+    $seen = [ordered]@{}
+    foreach ($l in $lines) {
+        $key = $l -replace '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}([.,]\d+)?\s*', ''
+        $key = $key -replace '^\d{1,2}:\d{2}:\d{2}\s*', ''
+        if ($seen.Contains($key)) { $seen[$key] = $seen[$key] + 1 } else { $seen[$key] = 1 }
+    }
+    $out = @()
+    foreach ($k in $seen.Keys) {
+        if ($seen[$k] -gt 1) { $out += "$k ..x$($seen[$k])" } else { $out += $k }
+    }
+    return ($out -join "`n")
 }
 
 function Test-DnsResolves {
@@ -181,6 +248,7 @@ function Get-MatlabInstallSection {
 }
 
 # --- Main ---
+Write-Host "MATLAB self-check running - this takes about 10-20 seconds, please wait..."
 $report = New-Object System.Text.StringBuilder
 Add-Section $report 'Report Metadata'
 Add-Line $report "Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
@@ -190,6 +258,7 @@ Get-SystemRequirementsSection -Report $report
 Get-MatlabInstallSection -Report $report
 
 $localMacs = Get-LocalMacs
+$localVolSerial = Get-LocalVolumeSerial
 $localUser = $env:USERNAME
 $localHostname = $env:COMPUTERNAME
 $srvHost = $null
@@ -212,31 +281,49 @@ foreach ($pattern in $patterns) {
                 continue
             }
             foreach ($f in $files) {
-                $licNum = Get-LicenseNumber -FilePath $f.FullName
+                $stmt = Get-IncrementStatement -FilePath $f.FullName
+                $licNum = Get-LicenseNumber -FilePath $f.FullName -Stmt $stmt
                 $numText = if ($licNum) { $licNum } else { 'not found - check file manually' }
                 Add-Line $report "Exists: $(Mask-Path $f.FullName) | License Number: $numText"
 
-                $hostid = Get-LicenseField -FilePath $f.FullName -FieldName 'HOSTID'
-                if ($hostid) {
-                    $hostidNorm = ($hostid -replace '[:\-]', '').ToUpper()
-                    if ($localMacs -contains $hostidNorm) {
-                        Add-Line $report '  Host ID match: PASS'
-                    } else {
-                        Add-Line $report '  Host ID match: FAIL (this machine does not match the license file)'
-                    }
-                } else {
-                    Add-Line $report '  Host ID match: N/A (no HOSTID field in this license file)'
-                }
+                if ($stmt) {
+                    $issued = Get-Field -Text $stmt -FieldName 'ISSUED'
+                    if (-not $issued) { $issued = 'unknown' }
+                    Add-Line $report "  Issued: $issued | Expires: $(Get-ExpiryDisplay -Stmt $stmt)"
 
-                $userInFile = Get-LicenseField -FilePath $f.FullName -FieldName 'USER_NAME'
-                if ($userInFile) {
-                    if ($userInFile.ToLower() -eq $localUser.ToLower()) {
-                        Add-Line $report '  Username match: PASS'
+                    $hostid = Get-Field -Text $stmt -FieldName 'HOSTID'
+                    if (-not $hostid) {
+                        Add-Line $report '  Host ID match: N/A (no HOSTID field in this license file)'
+                    } elseif ($hostid -match '(?i)^DISK_SERIAL_NUM=(.+)$') {
+                        $diskVal = $Matches[1].ToUpper()
+                        if ($localVolSerial -and $diskVal -eq $localVolSerial) {
+                            Add-Line $report '  Host ID match: PASS'
+                        } else {
+                            Add-Line $report '  Host ID match: FAIL (this machine does not match the license file)'
+                        }
+                    } elseif ($hostid -match '^[0-9A-Fa-f]{12}$') {
+                        $hostidNorm = $hostid.ToUpper()
+                        if ($localMacs -contains $hostidNorm) {
+                            Add-Line $report '  Host ID match: PASS'
+                        } else {
+                            Add-Line $report '  Host ID match: FAIL (this machine does not match the license file)'
+                        }
                     } else {
-                        Add-Line $report '  Username match: FAIL (license was issued to a different OS username)'
+                        Add-Line $report '  Host ID match: N/A (HOSTID format not recognized)'
+                    }
+
+                    $userInFile = Get-Field -Text $stmt -FieldName 'USER_NAME'
+                    if ($userInFile) {
+                        if ($userInFile.ToLower() -eq $localUser.ToLower()) {
+                            Add-Line $report '  Username match: PASS'
+                        } else {
+                            Add-Line $report '  Username match: FAIL (license was issued to a different OS username)'
+                        }
+                    } else {
+                        Add-Line $report '  Username match: N/A (no USER_NAME field in this license file)'
                     }
                 } else {
-                    Add-Line $report '  Username match: N/A (no USER_NAME field in this license file)'
+                    Add-Line $report '  Host ID match: N/A (no INCREMENT statement found in this file)'
                 }
 
                 if (-not $srvHost) {
@@ -275,19 +362,21 @@ if ($srvHost) {
     Add-Line $report 'No network license server configured (node-locked license, or no license file found)'
 }
 
-Add-Section $report 'Logs (today only)'
+Add-Section $report 'Logs (today, errors only)'
 $today = Get-Date -Format 'yyyy-MM-dd'
+$anyLogContent = $false
+
 $logTargets = @(
     @{ Name = 'Installation log'; Path = "$env:TEMP\mathworks_$env:USERNAME.log" },
     @{ Name = 'Activation log'; Path = "$env:TEMP\aws_$env:USERNAME.log" }
 )
 foreach ($t in $logTargets) {
     $content = Get-TodayLinesFromFile -FilePath $t.Path -TodayStr $today
-    if ($content) {
-        Add-Line $report "--- $($t.Name): $(Mask-Path $t.Path) (today) ---"
-        Add-Line $report $content
-    } else {
-        Add-Line $report "$($t.Name) not found or has no entries from today: $(Mask-Path $t.Path) (note: temp logs are deleted on reboot)"
+    $filtered = Get-FilteredDedupLines -Content $content
+    if ($filtered) {
+        $anyLogContent = $true
+        Add-Line $report "--- $($t.Name): $(Mask-Path $t.Path) ---"
+        Add-Line $report $filtered
     }
 }
 
@@ -296,15 +385,13 @@ if (Test-Path $svcDir) {
     $files = Get-ChildItem -Path $svcDir -File -ErrorAction SilentlyContinue
     foreach ($f in $files) {
         $content = Get-TodayLinesFromFile -FilePath $f.FullName -TodayStr $today
-        if ($content) {
-            Add-Line $report "--- $(Mask-Path $f.FullName) (today) ---"
-            Add-Line $report $content
-        } else {
-            Add-Line $report "$(Mask-Path $f.FullName): no entries from today"
+        $filtered = Get-FilteredDedupLines -Content $content
+        if ($filtered) {
+            $anyLogContent = $true
+            Add-Line $report "--- $(Mask-Path $f.FullName) ---"
+            Add-Line $report $filtered
         }
     }
-} else {
-    Add-Line $report "ServiceHost log dir not found: $(Mask-Path $svcDir)"
 }
 
 try {
@@ -312,15 +399,19 @@ try {
     foreach ($inst in $installs) {
         $lmLog = Join-Path $inst.FullName 'etc\lmlog.txt'
         $content = Get-TodayLinesFromFile -FilePath $lmLog -TodayStr $today
-        if ($content) {
-            Add-Line $report "--- License manager log: $lmLog (today) ---"
-            Add-Line $report $content
-        } else {
-            Add-Line $report "License manager log not found or has no entries from today: $lmLog"
+        $filtered = Get-FilteredDedupLines -Content $content
+        if ($filtered) {
+            $anyLogContent = $true
+            Add-Line $report "--- License manager log: $lmLog ---"
+            Add-Line $report $filtered
         }
     }
 } catch {
     Add-Line $report "Failed to check license manager logs: $_"
+}
+
+if (-not $anyLogContent) {
+    Add-Line $report 'No error-level log entries found for today in the standard locations.'
 }
 
 Add-Section $report 'Environment Variables'
