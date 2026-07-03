@@ -15,6 +15,10 @@ param(
     [string]$OutputDir = $PSScriptRoot
 )
 
+# Normalizes away any trailing backslash/dot quirk introduced by how a caller (e.g. a .bat
+# using "%~dp0.") passed this path, so Out-File never sees an illegal path string.
+$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
+
 $ErrorActionPreference = 'Continue'
 
 function Add-Section {
