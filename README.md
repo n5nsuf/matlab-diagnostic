@@ -1,6 +1,6 @@
 # MATLAB Self-Check Diagnostic Tool
 
-An independent, offline self-check tool for diagnosing your own MATLAB installation, activation,
+An standalone, offline self-check tool for diagnosing your own MATLAB installation, activation,
 and license problems. It runs locally and writes the **results** (pass/fail) to a small text
 report so you can see what might be wrong.
 
