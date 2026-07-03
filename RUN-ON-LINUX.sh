@@ -244,10 +244,19 @@ for dir in "$HOME/.matlab"/R*_licenses /usr/local/MATLAB/R*/licenses; do
             line "  Issued: $issued_val | Expires: $(format_expiry "$exp_date")"
 
             hostid="$(extract_field "$stmt" HOSTID)"
+            uname_in_file="$(extract_field "$stmt" USER_NAME)"
             if [ -z "$hostid" ]; then
                 line '  Host ID match: N/A (no HOSTID field in this license file)'
             elif echo "$hostid" | grep -qi '^DISK_SERIAL_NUM='; then
                 line '  Host ID match: N/A (Windows disk-serial lock - not applicable on Linux)'
+            elif echo "$hostid" | grep -Eq '^[0-9A-Fa-f]{8}:[0-9A-Fa-f]+$'; then
+                # MATLAB_HOSTID composite: <disk serial hex>:<username, hex-encoded ASCII>.
+                hex_user_part="${hostid#*:}"
+                line '  Host ID match: N/A (Windows disk-serial composite lock - not applicable on Linux)'
+                if [ -z "$uname_in_file" ]; then
+                    decoded_user="$(printf "$(echo "$hex_user_part" | sed 's/../\\x&/g')" 2>/dev/null)"
+                    [ -n "$decoded_user" ] && uname_in_file="$decoded_user"
+                fi
             elif echo "$hostid" | grep -Eq '^[0-9A-Fa-f]{12}$'; then
                 hostid_norm="$(echo "$hostid" | tr '[:lower:]' '[:upper:]')"
                 if echo "$local_macs" | grep -qw "$hostid_norm"; then
@@ -259,7 +268,6 @@ for dir in "$HOME/.matlab"/R*_licenses /usr/local/MATLAB/R*/licenses; do
                 line '  Host ID match: N/A (HOSTID format not recognized)'
             fi
 
-            uname_in_file="$(extract_field "$stmt" USER_NAME)"
             if [ -n "$uname_in_file" ]; then
                 if [ "$(echo "$uname_in_file" | tr '[:upper:]' '[:lower:]')" = "$(echo "$local_user" | tr '[:upper:]' '[:lower:]')" ]; then
                     line '  Username match: PASS'

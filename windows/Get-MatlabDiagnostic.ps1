@@ -292,6 +292,7 @@ foreach ($pattern in $patterns) {
                     Add-Line $report "  Issued: $issued | Expires: $(Get-ExpiryDisplay -Stmt $stmt)"
 
                     $hostid = Get-Field -Text $stmt -FieldName 'HOSTID'
+                    $userInFile = Get-Field -Text $stmt -FieldName 'USER_NAME'
                     if (-not $hostid) {
                         Add-Line $report '  Host ID match: N/A (no HOSTID field in this license file)'
                     } elseif ($hostid -match '(?i)^DISK_SERIAL_NUM=(.+)$') {
@@ -300,6 +301,22 @@ foreach ($pattern in $patterns) {
                             Add-Line $report '  Host ID match: PASS'
                         } else {
                             Add-Line $report '  Host ID match: FAIL (this machine does not match the license file)'
+                        }
+                    } elseif ($hostid -match '(?i)^MATLAB_HOSTID=([0-9A-Fa-f]+):([0-9A-Fa-f]+)$') {
+                        # Composite lock: <disk serial hex>:<username, hex-encoded ASCII>.
+                        $diskVal = $Matches[1].ToUpper()
+                        $hexUserPart = $Matches[2]
+                        if ($localVolSerial -and $diskVal -eq $localVolSerial) {
+                            Add-Line $report '  Host ID match: PASS'
+                        } else {
+                            Add-Line $report '  Host ID match: FAIL (this machine does not match the license file)'
+                        }
+                        if (-not $userInFile) {
+                            try {
+                                $bytes = for ($i = 0; $i -lt $hexUserPart.Length; $i += 2) { [Convert]::ToByte($hexUserPart.Substring($i, 2), 16) }
+                                $decoded = [System.Text.Encoding]::ASCII.GetString([byte[]]$bytes)
+                                if ($decoded) { $userInFile = $decoded }
+                            } catch {}
                         }
                     } elseif ($hostid -match '^[0-9A-Fa-f]{12}$') {
                         $hostidNorm = $hostid.ToUpper()
@@ -312,7 +329,6 @@ foreach ($pattern in $patterns) {
                         Add-Line $report '  Host ID match: N/A (HOSTID format not recognized)'
                     }
 
-                    $userInFile = Get-Field -Text $stmt -FieldName 'USER_NAME'
                     if ($userInFile) {
                         if ($userInFile.ToLower() -eq $localUser.ToLower()) {
                             Add-Line $report '  Username match: PASS'
