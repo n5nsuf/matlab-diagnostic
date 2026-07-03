@@ -347,6 +347,21 @@ content="$(today_lines_or_none "$activation_log")" && [ -n "$content" ] && filte
     line "$filtered"
 }
 
+svchost_base="$HOME/.MathWorks/ServiceHost"
+if [ -d "$svchost_base" ]; then
+    while IFS= read -r logdir; do
+        [ -d "$logdir" ] || continue
+        for f in "$logdir"/*; do
+            [ -f "$f" ] || continue
+            content="$(today_lines_or_none "$f")" && [ -n "$content" ] && filtered="$(filter_errors_dedup "$content")" && [ -n "$filtered" ] && {
+                any_log_content=1
+                line "--- $(mask_path "$f") ---"
+                line "$filtered"
+            }
+        done
+    done < <(find "$svchost_base" -type d -iname "logs" 2>/dev/null)
+fi
+
 [ "$any_log_content" -eq 0 ] && line 'No error-level log entries found for today in the standard locations.'
 
 section 'Environment Variables'
