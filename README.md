@@ -37,11 +37,16 @@ license is a network/concurrent one. The report never leaves your computer.
 
 ## Reference articles
 
+All from MathWorks' own documentation and support site:
+
 - [Log file locations](https://www.mathworks.com/matlabcentral/answers/101927)
 - [License file locations](https://www.mathworks.com/matlabcentral/answers/99147)
 - [Error 96 - can't reach license server](https://kr.mathworks.com/matlabcentral/answers/95122)
 - [Error 9 - username/Host ID mismatch](https://kr.mathworks.com/matlabcentral/answers/99067)
 - [MATLAB system requirements](https://kr.mathworks.com/support/requirements/matlab-system-requirements.html)
+- [network.lic file format](https://kr.mathworks.com/matlabcentral/answers/1843038)
+- [license_info.xml explained](https://kr.mathworks.com/matlabcentral/answers/116637)
+- [What is MathWorks Service Host?](https://kr.mathworks.com/help/install/ug/what-is-mathworks-service-host.html)
 
 ## How to run
 
