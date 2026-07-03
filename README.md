@@ -12,13 +12,23 @@ MathWorks, Inc. "MATLAB" is a registered trademark of The MathWorks, Inc.
 - **System requirements** - RAM, free disk space, CPU core count, detected GPU, OS version
 - **MATLAB installation** - which version(s) are installed and where
 - **License file** - does a license file exist in any of the standard locations, and if so:
-  - does the machine's Host ID (MAC address) match what's recorded in the license file
+  - its license number (from the `# LicenseNo:` comment, or the `SN=` field as a fallback),
+    issue date, and expiration date (or "permanent" for a never-expiring license)
+  - does the machine's Host ID match what's recorded in the license file - this compares
+    against the right thing automatically: a Windows disk-serial lock (`HOSTID=DISK_SERIAL_NUM=...`)
+    is compared against this machine's system drive serial, a MAC-address lock (bare hex) is
+    compared against this machine's network adapters, and anything else is reported as N/A
+    rather than guessed at
   - does the current OS username match what's recorded in the license file
 - **Network license server** (only if your license file points to one) - does the server hostname
   resolve, and is the port it uses reachable
-- **Today's log entries** - only lines/files from today, from the standard MATLAB install,
-  activation, ServiceHost, and license-manager log locations
+- **Today's log errors** - only error-looking lines from today, from the standard MATLAB
+  install, activation, ServiceHost, and license-manager log locations, with repeated messages
+  collapsed to `<message> ..xN`
 - **Whether `LM_LICENSE_FILE` / `MLM_LICENSE_FILE` are set** (not their value)
+
+While it runs, each script prints `Checking: <section>...` to the console so a several-second
+run doesn't look like it's frozen.
 
 ## Privacy notice
 
@@ -74,9 +84,17 @@ Each script prints the path to the report file it created and ends with these st
 
 ## Known limitations
 
-- **License number extraction is best-effort.** MATLAB license files don't have one universally
-  documented "license number" field format; the script looks for a `License Number:` comment near
-  the top of the file. If it isn't found, the report says so and you can check the file yourself.
+- **License number extraction covers the common cases, not every possible one.** It matches
+  both the `# LicenseNo:` and `# License Number:` comment styles, falling back to the `SN=`
+  field inside the license itself. If neither is present, the report says so rather than
+  guessing at a number.
+- **Host ID matching only recognizes two HOSTID formats**: Windows disk-serial
+  (`DISK_SERIAL_NUM=`) and bare-hex MAC address, which cover the license types MathWorks
+  realistically issues. Any other HOSTID format (dongle-based `FLEXID=`, etc.) is reported as
+  "not recognized" rather than compared incorrectly.
+- **The error-keyword filter is deliberately broad.** It matches on words like `error`, `fail`,
+  `denied`, `timeout`, etc., which can occasionally catch a benign line (e.g. containing
+  "failover"). This is intentional - missing a real error would be worse than one stray line.
 - **Linux log paths are estimates.** MathWorks' published log-location article only documents
   Windows and macOS. The Linux script guesses at the same naming pattern (e.g.
   `/tmp/mathworks_$USER.log`) and says so in the report if nothing is found there.
