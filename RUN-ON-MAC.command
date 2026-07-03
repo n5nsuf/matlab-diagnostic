@@ -220,52 +220,63 @@ for dir in "$HOME/Library/Application Support/MathWorks/MATLAB"/R*_licenses \
     for f in "${files[@]}"; do
         [ -f "$f" ] || continue
         lic_found=1
-        stmt="$(get_increment_stmt "$f")"
-        num="$(extract_license_number "$f" "$stmt")"
-        line "Exists: $(mask_path "$f") | License Number: $num"
+        fname="$(basename "$f")"
 
-        if [ -n "$stmt" ]; then
-            exp_date="$(printf '%s' "$stmt" | awk '{print $5}')"
-            issued_val="$(extract_field "$stmt" ISSUED)"
-            [ -z "$issued_val" ] && issued_val="unknown"
-            line "  Issued: $issued_val | Expires: $(format_expiry "$exp_date")"
+        if [ "$fname" = "license_info.xml" ]; then
+            line "Exists: $(mask_path "$f") | Online/account-based licensing marker (MathWorks account login required at MATLAB startup) - no offline license data to check"
+            continue
+        fi
 
-            hostid="$(extract_field "$stmt" HOSTID)"
-            uname_in_file="$(extract_field "$stmt" USER_NAME)"
-            if [ -z "$hostid" ]; then
-                line '  Host ID match: N/A (no HOSTID field in this license file)'
-            elif echo "$hostid" | grep -qi '^DISK_SERIAL_NUM='; then
-                line '  Host ID match: N/A (Windows disk-serial lock - not applicable on macOS)'
-            elif echo "$hostid" | grep -Eq '^[0-9A-Fa-f]{8}:[0-9A-Fa-f]+$'; then
-                # MATLAB_HOSTID composite: <disk serial hex>:<username, hex-encoded ASCII>.
-                hex_user_part="${hostid#*:}"
-                line '  Host ID match: N/A (Windows disk-serial composite lock - not applicable on macOS)'
-                if [ -z "$uname_in_file" ]; then
-                    decoded_user="$(printf "$(echo "$hex_user_part" | sed 's/../\\x&/g')" 2>/dev/null)"
-                    [ -n "$decoded_user" ] && uname_in_file="$decoded_user"
-                fi
-            elif echo "$hostid" | grep -Eq '^[0-9A-Fa-f]{12}$'; then
-                hostid_norm="$(echo "$hostid" | tr '[:lower:]' '[:upper:]')"
-                if echo "$local_macs" | grep -qw "$hostid_norm"; then
-                    line '  Host ID match: PASS'
-                else
-                    line '  Host ID match: FAIL (this machine does not match the license file)'
-                fi
-            else
-                line '  Host ID match: N/A (HOSTID format not recognized)'
-            fi
-
-            if [ -n "$uname_in_file" ]; then
-                if [ "$(echo "$uname_in_file" | tr '[:upper:]' '[:lower:]')" = "$(echo "$local_user" | tr '[:upper:]' '[:lower:]')" ]; then
-                    line '  Username match: PASS'
-                else
-                    line '  Username match: FAIL (license was issued to a different OS username)'
-                fi
-            else
-                line '  Username match: N/A (no USER_NAME field in this license file)'
-            fi
+        if [ "$fname" = "network.lic" ]; then
+            line "Exists: $(mask_path "$f") | Network client config - defines this machine's license server (see Network License Server Check below)"
         else
-            line '  Host ID match: N/A (no INCREMENT statement found in this file)'
+            stmt="$(get_increment_stmt "$f")"
+            num="$(extract_license_number "$f" "$stmt")"
+            line "Exists: $(mask_path "$f") | License Number: $num"
+
+            if [ -n "$stmt" ]; then
+                exp_date="$(printf '%s' "$stmt" | awk '{print $5}')"
+                issued_val="$(extract_field "$stmt" ISSUED)"
+                [ -z "$issued_val" ] && issued_val="unknown"
+                line "  Issued: $issued_val | Expires: $(format_expiry "$exp_date")"
+
+                hostid="$(extract_field "$stmt" HOSTID)"
+                uname_in_file="$(extract_field "$stmt" USER_NAME)"
+                if [ -z "$hostid" ]; then
+                    line '  Host ID match: N/A (no HOSTID field in this license file)'
+                elif echo "$hostid" | grep -qi '^DISK_SERIAL_NUM='; then
+                    line '  Host ID match: N/A (Windows disk-serial lock - not applicable on macOS)'
+                elif echo "$hostid" | grep -Eq '^[0-9A-Fa-f]{8}:[0-9A-Fa-f]+$'; then
+                    # MATLAB_HOSTID composite: <disk serial hex>:<username, hex-encoded ASCII>.
+                    hex_user_part="${hostid#*:}"
+                    line '  Host ID match: N/A (Windows disk-serial composite lock - not applicable on macOS)'
+                    if [ -z "$uname_in_file" ]; then
+                        decoded_user="$(printf "$(echo "$hex_user_part" | sed 's/../\\x&/g')" 2>/dev/null)"
+                        [ -n "$decoded_user" ] && uname_in_file="$decoded_user"
+                    fi
+                elif echo "$hostid" | grep -Eq '^[0-9A-Fa-f]{12}$'; then
+                    hostid_norm="$(echo "$hostid" | tr '[:lower:]' '[:upper:]')"
+                    if echo "$local_macs" | grep -qw "$hostid_norm"; then
+                        line '  Host ID match: PASS'
+                    else
+                        line '  Host ID match: FAIL (this machine does not match the license file)'
+                    fi
+                else
+                    line '  Host ID match: N/A (HOSTID format not recognized)'
+                fi
+
+                if [ -n "$uname_in_file" ]; then
+                    if [ "$(echo "$uname_in_file" | tr '[:upper:]' '[:lower:]')" = "$(echo "$local_user" | tr '[:upper:]' '[:lower:]')" ]; then
+                        line '  Username match: PASS'
+                    else
+                        line '  Username match: FAIL (license was issued to a different OS username)'
+                    fi
+                else
+                    line '  Username match: N/A (no USER_NAME field in this license file)'
+                fi
+            else
+                line '  Host ID match: N/A (no INCREMENT statement found in this file)'
+            fi
         fi
 
         if [ -z "$srv_host" ]; then

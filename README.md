@@ -14,7 +14,9 @@ a registered trademark of The MathWorks, Inc.
 - **MATLAB installation** - which version(s) are installed and where
 - **License file** - whether a license file exists in the standard locations, its license
   number, issue date, and expiration date, and whether it matches this machine and the
-  current user (pass/fail only)
+  current user (pass/fail only). Files that use online account-based licensing or are just a
+  network-connection config (rather than a full license) are recognized as such instead of
+  being reported as errors.
 - **Network license server** (only if your license points to one) - whether it's reachable
 - **Today's log errors** - only error-looking entries from today's MATLAB logs, deduplicated
 - **Whether `LM_LICENSE_FILE` / `MLM_LICENSE_FILE` are set** (not their value)
