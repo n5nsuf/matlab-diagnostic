@@ -248,6 +248,17 @@ function Get-MatlabInstallSection {
     }
 }
 
+function Get-ServiceHostSection {
+    param([System.Text.StringBuilder]$Report)
+    Add-Section $Report 'MathWorks Service Host Check'
+    $running = Get-Process -Name 'MathWorksServiceHost*' -ErrorAction SilentlyContinue
+    if ($running) {
+        Add-Line $Report 'MathWorks Service Host: RUNNING -> PASS'
+    } else {
+        Add-Line $Report 'MathWorks Service Host: NOT RUNNING -> WARN (required by MATLAB R2024a+ for licensing/account sign-in - try restarting MATLAB, or reinstalling Service Host if this persists)'
+    }
+}
+
 # --- Main ---
 Write-Host "MATLAB self-check running - this takes about 10-20 seconds, please wait..."
 $report = New-Object System.Text.StringBuilder
@@ -257,6 +268,7 @@ Add-Line $report 'Independent self-check tool - not affiliated with or endorsed 
 
 Get-SystemRequirementsSection -Report $report
 Get-MatlabInstallSection -Report $report
+Get-ServiceHostSection -Report $report
 
 $localMacs = Get-LocalMacs
 $localVolSerial = Get-LocalVolumeSerial

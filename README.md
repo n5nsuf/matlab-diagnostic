@@ -12,6 +12,8 @@ a registered trademark of The MathWorks, Inc.
 
 - **System requirements** - RAM, free disk space, CPU core count, detected GPU, OS version
 - **MATLAB installation** - which version(s) are installed and where
+- **MathWorks Service Host** - whether it's running (required by MATLAB R2024a+ for
+  licensing and account sign-in)
 - **License file** - whether a license file exists in the standard locations, its license
   number, issue date, and expiration date, and whether it matches this machine and the
   current user (pass/fail only). Files that use online account-based licensing or are just a

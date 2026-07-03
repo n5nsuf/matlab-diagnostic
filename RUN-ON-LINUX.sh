@@ -219,6 +219,13 @@ for dir in /usr/local/MATLAB/R* /opt/MATLAB/R*; do
 done
 [ "$matlab_found" -eq 0 ] && line 'No MATLAB installation found under /usr/local/MATLAB or /opt/MATLAB'
 
+section 'MathWorks Service Host Check'
+if pgrep -f "MathWorksServiceHost" >/dev/null 2>&1; then
+    line 'MathWorks Service Host: RUNNING -> PASS'
+else
+    line 'MathWorks Service Host: NOT RUNNING -> WARN (required by MATLAB R2024a+ for licensing/account sign-in - try restarting MATLAB, or reinstalling Service Host if this persists)'
+fi
+
 local_macs="$(collect_local_macs)"
 local_user="$USER"
 local_hostname="$(hostname)"
