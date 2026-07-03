@@ -1,11 +1,12 @@
 # MATLAB Self-Check Diagnostic Tool
 
-An independent, offline self-check tool for troubleshooting MATLAB installation, activation, and
-license problems. It runs locally, checks a handful of things MathWorks support usually asks about,
-and writes the **results** (pass/fail) to a small text report you can attach to a support email.
+An independent, offline self-check tool for diagnosing your own MATLAB installation, activation,
+and license problems. It runs locally and writes the **results** (pass/fail) to a small text
+report so you can see what might be wrong.
 
-**This is not an official MathWorks tool.** It is not created, endorsed, or affiliated with The
-MathWorks, Inc. "MATLAB" is a registered trademark of The MathWorks, Inc.
+**This is an independent, community-made tool, not an official MathWorks product.** It has no
+connection to, and is not created, endorsed, or affiliated with, The MathWorks, Inc. "MATLAB" is
+a registered trademark of The MathWorks, Inc.
 
 ## What it checks
 
@@ -28,8 +29,7 @@ identifiers) or your OS username to the report. Any such value is used only in m
 compare against what your own MATLAB license file expects, and the report records just the
 result: a match or a mismatch. Nothing is sent over the network except a reachability check
 against the license server address already written in your own license file, and only when your
-license is a network/concurrent one. The report never leaves your computer unless you choose to
-attach it to an email yourself.
+license is a network/concurrent one. The report never leaves your computer.
 
 ## Reference articles
 
@@ -54,13 +54,10 @@ No installation is required on any platform - each script only uses tools alread
 There's no single file that runs on all three operating systems by double-clicking (every OS decides
 whether to run a file by its extension), so pick the file named for your own OS.
 
-## Sending the report to support
+## After it runs
 
-Each script prints the path to the report file it created and ends with these steps:
-
-1. Open your email application and start a new message to your MATLAB support contact.
-2. Attach the report file (drag it into the message, or use your email client's Attach File option).
-3. Briefly describe the problem you're seeing, then send.
+Each script prints the path to the report file it created. Open it and read through the
+PASS/FAIL/WARN results to see what might be causing your MATLAB problem.
 
 ## Known limitations
 
@@ -73,3 +70,8 @@ Each script prints the path to the report file it created and ends with these st
 - macOS/Linux OS version is shown for information only, not graded pass/fail.
 - The network server reachability check needs `nc` (netcat) on macOS/Linux; if missing, the
   report says the check was skipped.
+
+## License
+
+[MIT](LICENSE) for the code in this repository. "MATLAB" and "MathWorks" are registered
+trademarks of The MathWorks, Inc. and are not covered by this license.

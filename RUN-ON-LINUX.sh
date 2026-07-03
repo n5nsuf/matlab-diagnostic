@@ -1,8 +1,9 @@
 #!/bin/bash
-# Independent MATLAB self-check diagnostic utility - NOT affiliated with, endorsed by, or
-# created by The MathWorks, Inc. "MATLAB" is a registered trademark of The MathWorks, Inc.
+# Independent, community-made MATLAB self-check diagnostic utility - no connection to, and NOT
+# affiliated with, endorsed by, or created by, The MathWorks, Inc. "MATLAB" is a registered
+# trademark of The MathWorks, Inc.
 #
-# Runs local checks useful for a MATLAB support request (system requirements, license file
+# Runs local checks to help you self-diagnose a MATLAB problem (system requirements, license file
 # validity, network license server reachability, today's log errors) and writes only the
 # PASS/FAIL results to a report. Your MAC address, hostname, and disk identifiers are read
 # in memory ONLY to compare against your MATLAB license file - they are never written to
@@ -344,8 +345,5 @@ echo
 echo "Diagnostic report saved to:"
 echo "  $OUT_FILE"
 echo
-echo "Next step: attach this file to an email to your MATLAB support contact."
-echo "  1. Open your email application and start a new message to your support contact."
-echo "  2. Attach the file above."
-echo "  3. Briefly describe the problem you are seeing, then send."
+echo "Open it and review the PASS/FAIL/WARN results to see what might be wrong."
 echo

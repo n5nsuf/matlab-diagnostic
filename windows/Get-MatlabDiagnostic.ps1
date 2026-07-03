@@ -1,8 +1,9 @@
 <#
-    Independent MATLAB self-check diagnostic utility - NOT affiliated with, endorsed by, or
-    created by The MathWorks, Inc. "MATLAB" is a registered trademark of The MathWorks, Inc.
+    Independent, community-made MATLAB self-check diagnostic utility - no connection to, and NOT
+    affiliated with, endorsed by, or created by, The MathWorks, Inc. "MATLAB" is a registered
+    trademark of The MathWorks, Inc.
 
-    Runs local checks useful for a MATLAB support request (system requirements, license file
+    Runs local checks to help you self-diagnose a MATLAB problem (system requirements, license file
     validity, network license server reachability, today's log errors) and writes only the
     PASS/FAIL results to a report. Your MAC address, hostname, and disk identifiers are read
     in memory ONLY to compare against your MATLAB license file - they are never written to
@@ -448,9 +449,6 @@ Write-Host ""
 Write-Host "Diagnostic report saved to:"
 Write-Host "  $outFile"
 Write-Host ""
-Write-Host "Next step: attach this file to an email to your MATLAB support contact."
-Write-Host "  1. Open your email application and start a new message to your support contact."
-Write-Host "  2. Attach the file above (drag it into the message, or use Attach File)."
-Write-Host "  3. Briefly describe the problem you are seeing, then send."
+Write-Host "Open it and review the PASS/FAIL/WARN results to see what might be wrong."
 Write-Host ""
 Read-Host "Press Enter to close this window"
