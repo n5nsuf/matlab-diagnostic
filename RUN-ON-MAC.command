@@ -22,17 +22,24 @@ section() { echo "Checking: $1..."; printf '\n=== %s ===\n' "$1" >> "$OUT_FILE";
 line() { printf '%s\n' "$1" >> "$OUT_FILE"; }
 
 # Replaces the home directory and username in a path with placeholders before it is printed.
+# The username is only replaced as a whole word (non-alphanumeric boundaries) so a very short
+# username can't corrupt unrelated parts of the path.
 mask_path() {
     local p="$1"
     p="${p//$HOME/<home>}"
-    p="${p//$USER/<user>}"
+    local u_re
+    u_re="$(printf '%s' "$USER" | sed -E 's/[].*^$()+?{}|[\\]/\\&/g')"
+    p="$(printf '%s' "$p" | sed -E "s/(^|[^[:alnum:]])${u_re}([^[:alnum:]]|$)/\1<user>\2/g")"
     echo "$p"
 }
 
 # Collects this machine's MAC addresses (no colons, uppercase) for in-memory comparison only.
 collect_local_macs() {
     local macs=""
-    for iface in en0 en1 en2 en3 en4; do
+    local ifaces
+    ifaces="$(ifconfig -l 2>/dev/null)"
+    [ -z "$ifaces" ] && ifaces="en0 en1 en2 en3 en4"
+    for iface in $ifaces; do
         local mac
         mac="$(ifconfig "$iface" 2>/dev/null | awk '/ether/{print $2}')"
         [ -n "$mac" ] && macs="$macs $(echo "$mac" | tr -d ':' | tr '[:lower:]' '[:upper:]')"
@@ -63,8 +70,10 @@ get_increment_stmt() {
 }
 
 # Extracts a KEY=value or KEY="value" field from an already-joined INCREMENT statement string.
+# The key must be preceded by whitespace so a longer key (e.g. MATLAB_HOSTID=) is never
+# partially consumed when looking for a shorter one (e.g. HOSTID=).
 extract_field() {
-    printf '%s' "$1" | sed -nE "s/.*${2}=\"?([^\" ]+)\"?.*/\1/p" | head -1
+    printf '%s' "$1" | sed -nE "s/.*[[:space:]]${2}=\"?([^\" ]+)\"?.*/\1/p" | head -1
 }
 
 # License number: "# LicenseNo:"/"# License Number:" comment first, SN= field as fallback.
@@ -147,16 +156,19 @@ filter_errors_dedup() {
     return 0
 }
 
-# Checks whether a hostname resolves, without revealing anything about the local machine.
-resolve_host() {
+# Checks whether a hostname resolves (IPv4 or IPv6), without revealing anything about the
+# local machine. Prints PASS/FAIL, or SKIPPED if no lookup tool is available.
+resolve_host_status() {
     local host="$1"
     if command -v dscacheutil >/dev/null 2>&1; then
-        dscacheutil -q host -a name "$host" 2>/dev/null | grep -q "ip_address" && return 0 || return 1
+        if dscacheutil -q host -a name "$host" 2>/dev/null | grep -Eq 'ip(v6)?_address'; then echo PASS; else echo FAIL; fi
+        return
     fi
     if command -v getent >/dev/null 2>&1; then
-        getent hosts "$host" >/dev/null 2>&1 && return 0 || return 1
+        if getent hosts "$host" >/dev/null 2>&1; then echo PASS; else echo FAIL; fi
+        return
     fi
-    return 1
+    echo 'SKIPPED (no DNS lookup tool found)'
 }
 
 # Tests TCP connectivity to host:port with a short timeout. Prints PASS/FAIL/SKIPPED.
@@ -213,6 +225,7 @@ fi
 local_macs="$(collect_local_macs)"
 local_user="$USER"
 local_hostname_short="$(hostname -s 2>/dev/null || hostname)"
+local_hostname_fqdn="$(hostname -f 2>/dev/null || hostname)"
 srv_host=""
 srv_port=""
 
@@ -253,7 +266,7 @@ for dir in "$HOME/Library/Application Support/MathWorks/MATLAB"/R*_licenses \
                     line '  Host ID match: N/A (no HOSTID field in this license file)'
                 elif echo "$hostid" | grep -qi '^DISK_SERIAL_NUM='; then
                     line '  Host ID match: N/A (Windows disk-serial lock - not applicable on macOS)'
-                elif echo "$hostid" | grep -Eq '^[0-9A-Fa-f]{8}:[0-9A-Fa-f]+$'; then
+                elif echo "$hostid" | grep -Eqi '^(MATLAB_HOSTID=)?[0-9A-Fa-f]+:[0-9A-Fa-f]+$'; then
                     # MATLAB_HOSTID composite: <disk serial hex>:<username, hex-encoded ASCII>.
                     hex_user_part="${hostid#*:}"
                     line '  Host ID match: N/A (Windows disk-serial composite lock - not applicable on macOS)'
@@ -291,7 +304,7 @@ for dir in "$HOME/Library/Application Support/MathWorks/MATLAB"/R*_licenses \
             if [ -n "$server_line" ]; then
                 candidate="$(echo "$server_line" | awk '{print $2}')"
                 candidate_lc="$(echo "$candidate" | tr '[:upper:]' '[:lower:]')"
-                if [ "$candidate_lc" != "this_host" ] && [ "$candidate_lc" != "$(echo "$local_hostname_short" | tr '[:upper:]' '[:lower:]')" ]; then
+                if [ "$candidate_lc" != "this_host" ] && [ "$candidate_lc" != "$(echo "$local_hostname_short" | tr '[:upper:]' '[:lower:]')" ] && [ "$candidate_lc" != "$(echo "$local_hostname_fqdn" | tr '[:upper:]' '[:lower:]')" ]; then
                     srv_host="$candidate"
                     srv_port="$(echo "$server_line" | awk '{print $4}')"
                     [ -z "$srv_port" ] && srv_port=27000
@@ -304,13 +317,13 @@ done
 
 section 'Network License Server Check'
 if [ -n "$srv_host" ]; then
-    line "Server (from license file): $srv_host:$srv_port"
-    if resolve_host "$srv_host"; then
-        line 'DNS resolution: PASS'
-        line "Port connectivity ($srv_port): $(check_port "$srv_host" "$srv_port")"
-    else
-        line 'DNS resolution: FAIL'
+    line "Server (from license file): <server-host>:$srv_port (hostname masked - may contain license server address)"
+    dns_status="$(resolve_host_status "$srv_host")"
+    line "DNS resolution: $dns_status"
+    if [ "$dns_status" = "FAIL" ]; then
         line "Port connectivity ($srv_port): SKIPPED (DNS resolution failed)"
+    else
+        line "Port connectivity ($srv_port): $(check_port "$srv_host" "$srv_port")"
     fi
 else
     line 'No network license server configured (node-locked license, or no license file found)'
@@ -319,14 +332,16 @@ fi
 section 'Logs (today, errors only)'
 any_log_content=0
 
-install_log="${TMPDIR:-/tmp}mathworks_${USER}.log"
+tmp_dir="${TMPDIR:-/tmp}"
+tmp_dir="${tmp_dir%/}"
+install_log="${tmp_dir}/mathworks_${USER}.log"
 content="$(today_lines_or_none "$install_log")" && [ -n "$content" ] && filtered="$(filter_errors_dedup "$content")" && [ -n "$filtered" ] && {
     any_log_content=1
     line "--- Installation log: $(mask_path "$install_log") ---"
     line "$filtered"
 }
 
-activation_log="${TMPDIR:-/tmp}aws_${USER}.log"
+activation_log="${tmp_dir}/aws_${USER}.log"
 content="$(today_lines_or_none "$activation_log")" && [ -n "$content" ] && filtered="$(filter_errors_dedup "$content")" && [ -n "$filtered" ] && {
     any_log_content=1
     line "--- Activation log: $(mask_path "$activation_log") ---"
@@ -365,10 +380,14 @@ for name in LM_LICENSE_FILE MLM_LICENSE_FILE; do
 done
 
 echo
-echo "Diagnostic report saved to:"
-echo "  $OUT_FILE"
-echo
-echo "Open it and review the PASS/FAIL/WARN results to see what might be wrong."
+if [ -s "$OUT_FILE" ]; then
+    echo "Diagnostic report saved to:"
+    echo "  $OUT_FILE"
+    echo
+    echo "Open it and review the PASS/FAIL/WARN results to see what might be wrong."
+else
+    echo "ERROR: failed to save the diagnostic report to $OUT_FILE (is this location writable?)" >&2
+fi
 echo
 read -n 1 -s -r -p "Press any key to close this window..."
 echo

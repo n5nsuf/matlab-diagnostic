@@ -35,10 +35,12 @@ function Add-Line {
 }
 
 # Replaces the home directory and username in a path with placeholders before it is printed.
+# The username is replaced case-sensitively and only as a whole word (non-alphanumeric
+# boundaries) so a very short username can't corrupt unrelated parts of the path.
 function Mask-Path {
     param([string]$Path)
     $masked = $Path -replace [regex]::Escape($env:USERPROFILE), '<home>'
-    $masked = $masked -replace [regex]::Escape($env:USERNAME), '<user>'
+    $masked = $masked -creplace "(?<![A-Za-z0-9])$([regex]::Escape($env:USERNAME))(?![A-Za-z0-9])", '<user>'
     return $masked
 }
 
@@ -87,9 +89,11 @@ function Get-IncrementStatement {
 }
 
 # Extracts a KEY=value or KEY="value" field from an already-joined INCREMENT statement string.
+# The key must be preceded by whitespace so a longer key (e.g. MATLAB_HOSTID=) is never
+# partially consumed when looking for a shorter one (e.g. HOSTID=).
 function Get-Field {
     param([string]$Text, [string]$FieldName)
-    if ($Text -and $Text -match "$FieldName=`"?([^`"\s]+)`"?") {
+    if ($Text -and $Text -match "(?:^|\s)$FieldName=`"?([^`"\s]+)`"?") {
         return $Matches[1]
     }
     return $null
@@ -214,10 +218,10 @@ function Get-SystemRequirementsSection {
     }
 
     try {
-        $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-        $cores = ($cpu | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
+        $cpus = @(Get-CimInstance Win32_Processor)
+        $cores = ($cpus | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
         $cpuVerdict = if ($cores -ge 4) { 'PASS' } else { 'WARN' }
-        Add-Line $Report "CPU: $($cpu.Name), $cores logical cores (4+ recommended) -> $cpuVerdict"
+        Add-Line $Report "CPU: $($cpus[0].Name), $cores logical cores (4+ recommended) -> $cpuVerdict"
     } catch {
         Add-Line $Report "Failed to check CPU: $_"
     }
@@ -274,6 +278,8 @@ $localMacs = Get-LocalMacs
 $localVolSerial = Get-LocalVolumeSerial
 $localUser = $env:USERNAME
 $localHostname = $env:COMPUTERNAME
+$localFqdn = $null
+try { $localFqdn = [System.Net.Dns]::GetHostEntry('').HostName } catch {}
 $srvHost = $null
 $srvPort = $null
 
@@ -323,7 +329,7 @@ foreach ($pattern in $patterns) {
                             } else {
                                 Add-Line $report '  Host ID match: FAIL (this machine does not match the license file)'
                             }
-                        } elseif ($hostid -match '(?i)^MATLAB_HOSTID=([0-9A-Fa-f]+):([0-9A-Fa-f]+)$') {
+                        } elseif ($hostid -match '(?i)^(?:MATLAB_HOSTID=)?([0-9A-Fa-f]+):([0-9A-Fa-f]+)$') {
                             # Composite lock: <disk serial hex>:<username, hex-encoded ASCII>.
                             $diskVal = $Matches[1].ToUpper()
                             $hexUserPart = $Matches[2]
@@ -369,7 +375,9 @@ foreach ($pattern in $patterns) {
                     $serverLine = $content | Where-Object { $_ -match '^SERVER\s+' } | Select-Object -First 1
                     if ($serverLine -and $serverLine -match '^SERVER\s+(\S+)\s+(\S+)(?:\s+(\d+))?') {
                         $candidate = $Matches[1]
-                        if ($candidate.ToLower() -ne 'this_host' -and $candidate.ToLower() -ne $localHostname.ToLower()) {
+                        $candLower = $candidate.ToLower()
+                        $isLocalHost = ($candLower -eq 'this_host' -or $candLower -eq $localHostname.ToLower() -or ($localFqdn -and $candLower -eq $localFqdn.ToLower()))
+                        if (-not $isLocalHost) {
                             $srvHost = $candidate
                             $srvPort = if ($Matches[3]) { [int]$Matches[3] } else { 27000 }
                         }
@@ -387,7 +395,7 @@ if (-not $anyDir) {
 
 Add-Section $report 'Network License Server Check'
 if ($srvHost) {
-    Add-Line $report "Server (from license file): ${srvHost}:${srvPort}"
+    Add-Line $report "Server (from license file): <server-host>:${srvPort} (hostname masked - may contain license server address)"
     if (Test-DnsResolves -HostName $srvHost) {
         Add-Line $report 'DNS resolution: PASS'
         $portOk = Test-PortOpen -HostName $srvHost -Port $srvPort
@@ -464,12 +472,22 @@ foreach ($name in @('LM_LICENSE_FILE', 'MLM_LICENSE_FILE')) {
 
 $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 $outFile = Join-Path $OutputDir "MATLAB_Diagnostic_${timestamp}.txt"
-$report.ToString() | Out-File -FilePath $outFile -Encoding utf8
+$saveError = $null
+try {
+    $report.ToString() | Out-File -FilePath $outFile -Encoding utf8 -ErrorAction Stop
+} catch {
+    $saveError = $_
+}
 
 Write-Host ""
-Write-Host "Diagnostic report saved to:"
-Write-Host "  $outFile"
-Write-Host ""
-Write-Host "Open it and review the PASS/FAIL/WARN results to see what might be wrong."
+if (-not $saveError -and (Test-Path $outFile) -and (Get-Item $outFile).Length -gt 0) {
+    Write-Host "Diagnostic report saved to:"
+    Write-Host "  $outFile"
+    Write-Host ""
+    Write-Host "Open it and review the PASS/FAIL/WARN results to see what might be wrong."
+} else {
+    [Console]::Error.WriteLine("ERROR: failed to save the diagnostic report to $outFile ($saveError). Printing it below instead:")
+    Write-Host $report.ToString()
+}
 Write-Host ""
 Read-Host "Press Enter to close this window"
